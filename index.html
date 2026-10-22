@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Arc to Zen</title>
+<meta name="description" content="Arc shuts down on December 22, 2026. Move your Arc Spaces, folders and pinned tabs into Zen Browser on your Mac in about ten minutes, no coding needed.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --paper: #f6f7f9;
+    --sheet: #ffffff;
+    --ink: #1e2430;
+    --ink-soft: #586173;
+    --line: #dde2ea;
+    --kraft: #b98552;
+    --kraft-soft: #f3e7d9;
+    --sky: #dce7f5;
+    --go: #2f7d5b;
+    --go-soft: #e2f1e9;
+    --term: #20262f;
+    --term-ink: #e8edf3;
+    --focus: #2f6fd6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #161a21;
+      --sheet: #1e232c;
+      --ink: #eef1f5;
+      --ink-soft: #a5aebd;
+      --line: #313846;
+      --kraft: #d9a978;
+      --kraft-soft: #3a2f24;
+      --sky: #22324a;
+      --go: #6fcf9f;
+      --go-soft: #1d3329;
+      --term: #0f1318;
+      --term-ink: #e8edf3;
+      --focus: #7fb0ff;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #161a21; --sheet: #1e232c; --ink: #eef1f5; --ink-soft: #a5aebd;
+    --line: #313846; --kraft: #d9a978; --kraft-soft: #3a2f24; --sky: #22324a;
+    --go: #6fcf9f; --go-soft: #1d3329; --term: #0f1318; --term-ink: #e8edf3; --focus: #7fb0ff;
+  }
+
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
+  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+  body {
+    margin: 0; background: var(--paper); color: var(--ink);
+    font: 18px/1.6 "Atkinson Hyperlegible", system-ui, sans-serif;
+  }
+  a { color: inherit; text-decoration-color: var(--kraft); text-decoration-thickness: 2px; text-underline-offset: 3px; }
+  :focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; border-radius: 6px; }
+
+  .wrap { max-width: 720px; margin: 0 auto; padding: 0 16px; }
+  h1, h2, h3 { font-family: "Bricolage Grotesque", sans-serif; letter-spacing: -0.02em; }
+
+  /* ── Hero ───────────────────────────────────────────── */
+  .hero { padding: 56px 0 24px; }
+  .deadline {
+    display: inline-block; margin: 0 0 22px; padding: 6px 14px;
+    background: var(--kraft-soft); color: var(--ink);
+    border-radius: 999px; font-size: 15px;
+  }
+  .deadline b { color: var(--kraft); }
+  h1 { font-size: clamp(40px, 8vw, 68px); line-height: 1.02; font-weight: 800; margin: 0 0 18px; }
+  .lede { font-size: 20px; color: var(--ink-soft); margin: 0 0 28px; max-width: 34em; }
+  .cta {
+    display: inline-block; background: var(--ink); color: var(--paper);
+    padding: 14px 26px; border-radius: 14px; font-weight: 700; text-decoration: none; font-size: 18px;
+  }
+  .cta:hover { background: var(--kraft); color: #fff; }
+  .small { font-size: 15px; color: var(--ink-soft); margin-top: 14px; }
+
+  /* The move: two sidebars, folders travel across once */
+  .move {
+    margin: 44px 0 8px; display: grid; grid-template-columns: 1fr 56px 1fr; align-items: center;
+  }
+  .bar {
+    background: var(--sheet); border: 1px solid var(--line); border-radius: 18px;
+    padding: 14px 12px 16px; min-height: 236px;
+  }
+  .bar-name { font: 700 15px "Bricolage Grotesque", sans-serif; margin: 2px 6px 10px; color: var(--ink-soft); }
+  .row {
+    display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 10px;
+    border-radius: 9px; font-size: 15px; white-space: nowrap; overflow: hidden;
+  }
+  .row svg { flex: none; }
+  .row.sub { padding-left: 30px; }
+  .ghost { color: var(--line); }
+  .ghost .lbl { background: var(--line); height: 9px; border-radius: 5px; flex: 1; max-width: 110px; }
+  .truck { justify-self: center; color: var(--kraft); }
+  .target .row { opacity: 0; transform: translateX(-28px); }
+  .source .row.travel { transition: opacity .4s ease; }
+  .play .target .row { animation: arrive .5s cubic-bezier(.2,.8,.2,1) forwards; }
+  .play .source .row.travel { opacity: .28; }
+  @keyframes arrive { to { opacity: 1; transform: none; } }
+  @media (prefers-reduced-motion: reduce) {
+    .target .row { opacity: 1; transform: none; }
+    .play .target .row { animation: none; }
+  }
+  @media (max-width: 560px) {
+    .move { grid-template-columns: 1fr; gap: 6px; }
+    .truck { transform: rotate(90deg); }
+    .bar { min-height: 0; }
+  }
+
+  /* ── Sections ───────────────────────────────────────── */
+  section { padding: 40px 0; }
+  h2 { font-size: clamp(28px, 5vw, 38px); line-height: 1.1; margin: 0 0 14px; }
+  .comes { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; margin-top: 18px; }
+  .comes h3 { font-size: 19px; margin: 0 0 8px; }
+  .comes ul { list-style: none; padding: 0; margin: 0; }
+  .comes li { padding: 7px 0 7px 30px; position: relative; border-bottom: 1px solid var(--line); }
+  .comes li::before { position: absolute; left: 2px; top: 7px; font-weight: 700; }
+  .yes li::before { content: "✓"; color: var(--go); }
+  .no li::before { content: "–"; color: var(--ink-soft); }
+  .no li { color: var(--ink-soft); }
+  @media (max-width: 560px) { .comes { grid-template-columns: 1fr; } }
+
+  /* Steps: a real sequence, so numbered, on a track */
+  ol.steps { list-style: none; counter-reset: s; padding: 0; margin: 26px 0 0; position: relative; }
+  ol.steps::before {
+    content: ""; position: absolute; left: 21px; top: 10px; bottom: 30px;
+    width: 2px; background: repeating-linear-gradient(var(--line) 0 8px, transparent 8px 14px);
+  }
+  .steps > li { counter-increment: s; position: relative; padding: 0 0 38px 66px; }
+  .steps > li::before {
+    content: counter(s); position: absolute; left: 0; top: 0;
+    width: 44px; height: 44px; border-radius: 13px;
+    display: grid; place-items: center;
+    background: var(--kraft); color: #fff;
+    font: 800 20px "Bricolage Grotesque", sans-serif;
+  }
+  .steps > li:last-child::before { background: var(--go); }
+  .steps h3 { font-size: 23px; margin: 6px 0 6px; line-height: 1.25; }
+  .steps p { margin: 6px 0; }
+  .see {
+    margin-top: 12px; padding: 12px 16px; background: var(--sky); border-radius: 12px; font-size: 16px;
+  }
+  .see > b:first-child { display: block; font-size: 14px; color: var(--ink-soft); font-weight: 700; margin-bottom: 2px; }
+
+  kbd {
+    display: inline-block; min-width: 1.6em; padding: 1px 8px; margin: 0 1px;
+    font: 700 15px "Atkinson Hyperlegible", sans-serif; text-align: center;
+    background: var(--sheet); border: 1px solid var(--line); border-bottom-width: 3px; border-radius: 8px;
+  }
+
+  .cmd {
+    margin: 14px 0 4px; background: var(--term); color: var(--term-ink);
+    border-radius: 14px; overflow: hidden;
+  }
+  .cmd-top { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px 0 16px; }
+  .dots { display: flex; gap: 6px; }
+  .dots i { width: 10px; height: 10px; border-radius: 50%; background: #4a5260; }
+  .copy {
+    font: 700 15px "Atkinson Hyperlegible", sans-serif; color: var(--term);
+    background: var(--term-ink); border: 0; border-radius: 9px; padding: 7px 14px; cursor: pointer;
+  }
+  .copy.done { background: #8fe0b5; }
+  .cmd pre {
+    margin: 0; padding: 12px 16px 16px; overflow-x: auto;
+    font: 15px/1.55 ui-monospace, "SF Mono", Menlo, monospace; white-space: pre-wrap; word-break: break-all;
+  }
+  .q { margin: 10px 0 0; padding: 0; list-style: none; font-size: 16px; }
+  .q li { padding: 6px 0; border-bottom: 1px dashed var(--line); }
+  .q li:last-child { border-bottom: 0; }
+  .q em { font-style: normal; color: var(--ink-soft); }
+
+  .note {
+    border-left: 4px solid var(--kraft); background: var(--sheet); padding: 14px 18px; border-radius: 0 12px 12px 0; margin: 18px 0;
+  }
+  .note p { margin: 4px 0; }
+
+  details { border-bottom: 1px solid var(--line); padding: 4px 0; }
+  details:first-of-type { border-top: 1px solid var(--line); }
+  summary { cursor: pointer; padding: 12px 0; font-weight: 700; list-style: none; display: flex; justify-content: space-between; gap: 16px; }
+  summary::-webkit-details-marker { display: none; }
+  summary::after { content: "+"; font: 700 22px "Bricolage Grotesque", sans-serif; color: var(--kraft); line-height: 1; }
+  details[open] summary::after { content: "–"; }
+  details p { margin: 0 0 14px; color: var(--ink-soft); }
+
+  footer { padding: 36px 0 56px; color: var(--ink-soft); font-size: 15px; border-top: 1px solid var(--line); margin-top: 24px; }
+  .notmac { display: none; }
+  .is-notmac .notmac { display: block; }
+
+  .theme {
+    position: fixed; top: 14px; right: 14px; width: 40px; height: 40px; border-radius: 12px;
+    border: 1px solid var(--line); background: var(--sheet); color: var(--ink); cursor: pointer; font-size: 17px;
+  }
+</style>
+</head>
+<body>
+<button class="theme" id="theme" type="button" aria-label="Switch light or dark mode">◑</button>
+
+<header class="hero wrap">
+  <p class="deadline" id="deadline">Arc shuts down on <b>December 22, 2026</b></p>
+  <h1>Take your Arc sidebar with you to Zen</h1>
+  <p class="lede">Your Spaces, folders and pinned tabs, moved into the Zen browser on your Mac in about ten minutes. No coding and no accounts, just one line to copy and paste.</p>
+  <a class="cta" href="#steps">Show me how</a>
+  <p class="small">Free and open source. Your Arc stays as it is; nothing is uploaded anywhere.</p>
+
+  <div class="move" id="move" aria-label="Illustration: folders from your Arc sidebar appear in the same order in your Zen sidebar" role="img">
+    <div class="bar source">
+      <div class="bar-name">Arc</div>
+      <div class="row travel"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7h6l2 2h10v10H3z"/></svg>Inspiration</div>
+      <div class="row travel sub"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7h6l2 2h10v10H3z"/></svg>Art</div>
+      <div class="row travel"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7h6l2 2h10v10H3z"/></svg>Projects</div>
+      <div class="row travel sub"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8"/></svg>Roadmap</div>
+      <div class="row travel"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7h6l2 2h10v10H3z"/></svg>Job hunt</div>
+      <div class="row travel"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8"/></svg>Reading list</div>
+    </div>
+    <svg class="truck" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+    <div class="bar target">
+      <div class="bar-name">Zen</div>
+      <div class="row" style="animation-delay:.15s"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7h6l2 2h10v10H3z"/></svg>Inspiration</div>
+      <div class="row sub" style="animation-delay:.3s"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7h6l2 2h10v10H3z"/></svg>Art</div>
+      <div class="row" style="animation-delay:.45s"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7h6l2 2h10v10H3z"/></svg>Projects</div>
+      <div class="row sub" style="animation-delay:.6s"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8"/></svg>Roadmap</div>
+      <div class="row" style="animation-delay:.75s"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7h6l2 2h10v10H3z"/></svg>Job hunt</div>
+      <div class="row" style="animation-delay:.9s"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8"/></svg>Reading list</div>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <section aria-labelledby="what">
+    <h2 id="what">What comes with you</h2>
+    <div class="comes">
+      <div class="yes">
+        <h3>Moved for you</h3>
+        <ul>
+          <li>Every Space, as a Zen Space</li>
+          <li>Folders, including folders inside folders</li>
+          <li>Pinned tabs, in the same order</li>
+          <li>Favorites, as Zen Essentials</li>
+        </ul>
+      </div>
+      <div class="no">
+        <h3>Not moved by this</h3>
+        <ul>
+          <li>Passwords</li>
+          <li>History</li>
+          <li>Extensions</li>
+          <li>Tabs you hadn't pinned</li>
+        </ul>
+      </div>
+    </div>
+    <p class="small">Save your passwords somewhere safe before December 22. The FAQ below explains how.</p>
+  </section>
+
+  <section id="steps" aria-labelledby="how">
+    <h2 id="how">Five steps</h2>
+    <p>Do this on the Mac where you use Arc. Keep Arc installed until you're done.</p>
+    <div class="note notmac"><p><b>You seem to be on a phone or another computer.</b> Open this page on your Mac to follow along.</p></div>
+
+    <ol class="steps">
+      <li>
+        <h3>Get Zen, open it once, then quit it</h3>
+        <p>Download Zen from <a href="https://zen-browser.app/">zen-browser.app</a> and open it so it can set itself up. Then quit it completely: with Zen in front, press <kbd>⌘</kbd> <kbd>Q</kbd>.</p>
+        <p>Already using Zen? Just quit it. Closing the window isn't enough; Zen has to be fully quit for the move to work.</p>
+      </li>
+
+      <li>
+        <h3>Open Terminal</h3>
+        <p>Terminal is an app that's already on every Mac. Press <kbd>⌘</kbd> <kbd>Space</kbd>, type <b>Terminal</b>, and press <kbd>Return</kbd>.</p>
+        <div class="see"><b>You'll see</b>A plain window with a line of text ending in <code>%</code>. That's it waiting for you.</div>
+      </li>
+
+      <li>
+        <h3>Copy this line, paste it into Terminal, press Return</h3>
+        <div class="cmd">
+          <div class="cmd-top"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span><button class="copy" type="button" data-copy="run">Copy</button></div>
+          <pre id="run">cd ~ &amp;&amp; curl -fsSLO https://raw.githubusercontent.com/Glebelov96/arc-to-zen-guide/main/arc2zen.py &amp;&amp; python3 arc2zen.py</pre>
+        </div>
+        <p>To paste, click inside Terminal and press <kbd>⌘</kbd> <kbd>V</kbd>. This downloads a small helper and starts it. It reads your Arc sidebar and doesn't change Arc.</p>
+        <div class="see"><b>If your Mac asks to install “command line developer tools”</b>Click <b>Install</b>, wait for it to finish (a few minutes), then paste the line again.</div>
+      </li>
+
+      <li>
+        <h3>Answer a few questions</h3>
+        <p>The helper shows what it found in Arc and asks before changing anything. Pressing <kbd>Return</kbd> picks the suggested answer, which is right for most people.</p>
+        <ul class="q">
+          <li><b>Which profile should I use?</b> <em>Only asked if your Mac has more than one Zen setup. It shows the Spaces in each one; pick the one you recognise.</em></li>
+          <li><b>Also add your Arc Favorites as Zen Essentials?</b> <em>Your Favorites become the icons at the top of Zen's sidebar.</em></li>
+          <li><b>Go ahead?</b> <em>Saves a backup of Zen first, then moves everything.</em></li>
+        </ul>
+        <div class="see"><b>You'll see</b>“Done. Open Zen — your Arc Spaces are in the sidebar.”</div>
+      </li>
+
+      <li>
+        <h3>Open Zen</h3>
+        <p>Your Spaces are in the sidebar with their folders. Switch between them with the icons at the bottom of the sidebar, or by swiping with two fingers. Each tab loads the first time you click it.</p>
+      </li>
+    </ol>
+  </section>
+
+  <section aria-labelledby="undo">
+    <h2 id="undo">Changed your mind?</h2>
+    <p>Quit Zen with <kbd>⌘</kbd> <kbd>Q</kbd>, open Terminal, and paste this. It puts Zen back exactly as it was before the move.</p>
+    <div class="cmd">
+      <div class="cmd-top"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span><button class="copy" type="button" data-copy="undo-cmd">Copy</button></div>
+      <pre id="undo-cmd">cd ~ &amp;&amp; python3 arc2zen.py --undo</pre>
+    </div>
+  </section>
+
+  <section aria-labelledby="faq">
+    <h2 id="faq">Questions</h2>
+    <details>
+      <summary>Is this safe?</summary>
+      <p>It only reads Arc's sidebar file and only changes Zen's list of tabs, after saving a copy so you can undo. It runs entirely on your Mac and sends nothing over the internet. The code is public on <a href="https://github.com/Glebelov96/arc-to-zen-guide">GitHub</a> if you or a techy friend want to read it.</p>
+    </details>
+    <details>
+      <summary>It said “Zen is open”</summary>
+      <p>Zen is still running in the background. Click Zen, press <kbd>⌘</kbd> <kbd>Q</kbd>, wait a few seconds, and paste the line again.</p>
+    </details>
+    <details>
+      <summary>It finished, but Zen looks the same</summary>
+      <p>Your Mac has more than one Zen setup and a different one was picked. Quit Zen, open it, create a Space with an unusual name, quit Zen again, and run the line once more. Pick the profile that lists the Space you just made.</p>
+    </details>
+    <details>
+      <summary>What about my passwords?</summary>
+      <p>The helper doesn't move passwords. Before December 22, save them somewhere you trust, such as a password manager or Apple Passwords. If you export them to a file along the way, delete the file afterwards, because anyone can read it.</p>
+    </details>
+    <details>
+      <summary>Should I just use Dia instead?</summary>
+      <p>The Browser Company recommends its new browser, Dia, which imports Arc directly, including passwords and history. If you'd like to stay with that team, that's the easiest path. This page is for people who'd rather move to Zen.</p>
+    </details>
+    <details>
+      <summary>I'm on Windows</summary>
+      <p>This helper is for Macs only for now. On Windows, use Arc's own option to export a list of your tabs, import it into Zen as bookmarks, then pin the ones you want.</p>
+    </details>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <p>An independent, community guide. Not made by or affiliated with The Browser Company or the Zen team. Arc and Zen are the names of their respective browsers.</p>
+    <p>Built on the open-source <a href="https://github.com/shub-rajput/arc-to-zen-migration">arc-to-zen-migration</a>. Technical guide and source: <a href="https://github.com/Glebelov96/arc-to-zen-guide">github.com/Glebelov96/arc-to-zen-guide</a>.</p>
+  </div>
+</footer>
+
+<script>
+  // Copy buttons
+  document.querySelectorAll('.copy').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var text = document.getElementById(btn.dataset.copy).textContent;
+      function done() {
+        btn.textContent = 'Copied'; btn.classList.add('done');
+        setTimeout(function () { btn.textContent = 'Copy'; btn.classList.remove('done'); }, 1800);
+      }
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(done, function () {});
+      } else {
+        var r = document.createRange(); r.selectNodeContents(document.getElementById(btn.dataset.copy));
+        var s = window.getSelection(); s.removeAllRanges(); s.addRange(r);
+      }
+    });
+  });
+
+  // Days left until Arc shuts down
+  (function () {
+    var end = new Date(2026, 11, 22);
+    var now = new Date(); now.setHours(0, 0, 0, 0);
+    var days = Math.round((end - now) / 86400000);
+    var el = document.getElementById('deadline');
+    if (days > 1) el.innerHTML = 'Arc shuts down on <b>December 22, 2026</b>, in ' + days + ' days';
+    else if (days === 1) el.innerHTML = 'Arc shuts down <b>tomorrow</b>, December 22, 2026';
+    else if (days === 0) el.innerHTML = 'Arc shuts down <b>today</b>';
+    else el.innerHTML = 'Arc shut down on <b>December 22, 2026</b>';
+  })();
+
+  // Not on a Mac? Say so gently.
+  (function () {
+    var ua = navigator.userAgent;
+    var mac = /Macintosh|Mac OS X/.test(ua) && !/iPhone|iPad/.test(ua) && !(navigator.maxTouchPoints > 1);
+    if (!mac) document.body.classList.add('is-notmac');
+  })();
+
+  // The one moment of motion: folders move across when the picture comes into view
+  (function () {
+    var move = document.getElementById('move');
+    if (!('IntersectionObserver' in window)) { move.classList.add('play'); return; }
+    var io = new IntersectionObserver(function (entries) {
+      if (entries[0].isIntersecting) { move.classList.add('play'); io.disconnect(); }
+    }, { threshold: 0.4 });
+    io.observe(move);
+  })();
+
+  // Theme toggle
+  (function () {
+    var root = document.documentElement;
+    try { var t = localStorage.getItem('theme'); if (t) root.setAttribute('data-theme', t); } catch (e) {}
+    document.getElementById('theme').addEventListener('click', function () {
+      var dark = root.getAttribute('data-theme') ? root.getAttribute('data-theme') === 'dark'
+        : matchMedia('(prefers-color-scheme: dark)').matches;
+      var next = dark ? 'light' : 'dark';
+      root.setAttribute('data-theme', next);
+      try { localStorage.setItem('theme', next); } catch (e) {}
+    });
+  })();
+</script>
+</body>
+</html>
