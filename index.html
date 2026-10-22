@@ -303,7 +303,7 @@
     <div>
       <p>The steps above move your sidebar. For everything else, run <code>python3 arc2zen.py --report</code> to get a checklist with your extensions matched to their Zen add-ons.</p>
       <ul class="qa">
-        <li><b>History</b><span>Run <code>python3 arc2zen.py --export-history</code>. It reads your Arc history (read-only) and saves it as a file you can keep and search. Zen can't import history directly.</span></li>
+        <li><b>History</b><span>Run <code>python3 arc2zen.py --import-history</code>. It writes your Arc history into Zen's own history — it shows up in the address bar and History menu. Zen's history file is backed up and checked first, and rolled back if anything looks wrong. Prefer a file to keep? Use <code>--export-history</code> instead.</span></li>
         <li><b>Passwords</b><span>This tool never touches your passwords. Export them from Arc's settings to a file, import that file in Zen, then delete it. Your Mac does the encryption, not us.</span></li>
         <li><b>Extensions</b><span>Reinstall them from addons.mozilla.org. The report lists each one with a link.</span></li>
       </ul>

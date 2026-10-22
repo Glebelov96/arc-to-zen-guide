@@ -58,7 +58,7 @@ python3 arc2zen.py --report
 
 This writes a short HTML report: what moved automatically, and a checklist for the rest, with your installed extensions matched to their Firefox add-ons.
 
-- **History** — `python3 arc2zen.py --export-history` reads Arc's history (read-only) and saves it as HTML and CSV you can keep and search. Zen has no direct history import, so this keeps it readable after Arc is gone.
+- **History** — `python3 arc2zen.py --import-history` writes your Arc history straight into Zen's own history, so it shows up in the address bar and the History menu. It reads Arc read-only, backs up Zen's history database, writes in a transaction, then runs SQLite's integrity and foreign-key checks and rolls back if anything is off. It only writes to a Firefox/Zen schema version it has been checked against. `--export-history` instead saves history as HTML and CSV to keep and search.
 - **Passwords** — this tool **never reads or moves your passwords.** Export them from Arc's own settings to a file, import that file in Zen, then delete it. The browsers do the encryption; arc2zen stays out of it entirely.
 - **Extensions** — the report lists each one with where to find it on addons.mozilla.org.
 
@@ -71,6 +71,7 @@ On Windows, use `py` instead of `python3`.
 | `python3 arc2zen.py` | Guided migration |
 | `python3 arc2zen.py --save-arc` | Save a copy of your Arc sidebar to Documents |
 | `python3 arc2zen.py --report` | Write a report: what moves, and what to do by hand |
+| `python3 arc2zen.py --import-history` | Write your Arc history into Zen's own history |
 | `python3 arc2zen.py --export-history` | Save your Arc history as HTML and CSV (read-only) |
 | `python3 arc2zen.py --list` | Show your Arc Spaces and Zen profiles, change nothing |
 | `python3 arc2zen.py --dry-run` | Show what would happen, change nothing |

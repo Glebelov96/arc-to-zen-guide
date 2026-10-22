@@ -388,6 +388,128 @@ class TestCommandLine(unittest.TestCase):
         self.assertEqual((self.sb.real / z.SESSION_FILE).read_bytes(), self.sb.original)
 
 
+def make_places(path, version=87):
+    """A minimal but faithful Firefox/Zen places.sqlite: the three tables the
+    importer touches, with the real FK and unique-guid index."""
+    import sqlite3
+    Path(path).unlink(missing_ok=True)
+    con = sqlite3.connect(path)
+    con.executescript("""
+      CREATE TABLE moz_origins (id INTEGER PRIMARY KEY, prefix TEXT NOT NULL,
+        host TEXT NOT NULL, frecency INTEGER NOT NULL, recalc_frecency INTEGER NOT NULL,
+        alt_frecency INTEGER, recalc_alt_frecency INTEGER NOT NULL);
+      CREATE TABLE moz_places (id INTEGER PRIMARY KEY, url LONGVARCHAR, title LONGVARCHAR,
+        rev_host LONGVARCHAR, visit_count INTEGER DEFAULT 0, hidden INTEGER DEFAULT 0 NOT NULL,
+        typed INTEGER DEFAULT 0 NOT NULL, frecency INTEGER DEFAULT -1 NOT NULL,
+        last_visit_date INTEGER, guid TEXT, foreign_count INTEGER DEFAULT 0 NOT NULL,
+        url_hash INTEGER DEFAULT 0 NOT NULL, origin_id INTEGER,
+        recalc_frecency INTEGER DEFAULT 0 NOT NULL, recalc_alt_frecency INTEGER DEFAULT 0 NOT NULL,
+        FOREIGN KEY (origin_id) REFERENCES moz_origins(id));
+      CREATE UNIQUE INDEX moz_places_guid_uniqueindex ON moz_places (guid);
+      CREATE TABLE moz_historyvisits (id INTEGER PRIMARY KEY, from_visit INTEGER,
+        place_id INTEGER, visit_date INTEGER, visit_type INTEGER, session INTEGER,
+        source INTEGER NOT NULL);
+    """)
+    # one pre-existing page, so dedupe has something to hit
+    con.execute("INSERT INTO moz_origins (prefix,host,frecency,recalc_frecency,recalc_alt_frecency)"
+                " VALUES ('https://','example.com',100,0,1)")
+    con.execute("INSERT INTO moz_places (url,title,rev_host,visit_count,guid,url_hash,origin_id,"
+                "recalc_frecency,recalc_alt_frecency) VALUES "
+                "('https://example.com/already','Already','moc.elpmaxe.',1,'existingGUID0',?,1,0,1)",
+                (z.places_url_hash("https://example.com/already"),))
+    con.execute(f"PRAGMA user_version = {version}")
+    con.commit()
+    con.close()
+
+
+class TestPlacesHash(unittest.TestCase):
+    def test_golden_values_from_a_real_zen_db(self):
+        # (url, url_hash) pairs read from a real Zen places.sqlite (Oct 2026).
+        for url, want in [
+            ("https://www.mozilla.org/about/", 0x2b124d6d7c3d),
+            ("https://www.mozilla.org/contribute/", 0x2b123edf2a3c),
+            ("https://support.mozilla.org/products/firefox", 0x2b127843ecb6),
+        ]:
+            self.assertEqual(z.places_url_hash(url), want, url)
+
+
+class TestImportHistory(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.places = Path(self.dir.name) / "places.sqlite"
+        make_places(self.places)
+        now_us = int((time.time() + 11_644_473_600) * 1_000_000)
+        self.rows = [
+            ("https://example.com/alpha", "Alpha", 3, now_us),
+            ("https://news.example.org/", "News", 10, now_us - 3600_000_000),
+            ("https://example.com/already", "Already (dup url)", 2, now_us),  # skipped
+            ("https://example.com/beta", "Beta (same host)", 1, now_us),
+        ]
+
+    def tearDown(self):
+        self.dir.cleanup()
+
+    def _count(self, table):
+        import sqlite3
+        con = sqlite3.connect(self.places)
+        try:
+            return con.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
+        finally:
+            con.close()
+
+    def test_adds_and_verifies(self):
+        added, skipped, backup = z.import_history_into_places(self.places, self.rows)
+        self.assertEqual(added, 3)
+        self.assertEqual(skipped, 1)       # the duplicate url
+        self.assertTrue(backup.exists())
+        import sqlite3
+        con = sqlite3.connect(self.places)
+        self.assertEqual(con.execute("PRAGMA integrity_check").fetchone()[0], "ok")
+        self.assertEqual(con.execute("PRAGMA foreign_key_check").fetchall(), [])
+        # same host reuses the one origin
+        self.assertEqual(con.execute(
+            "SELECT count(*) FROM moz_origins WHERE host='example.com'").fetchone()[0], 1)
+        # every inserted place has a valid origin, a visit, correct url_hash, recalc flag
+        for url in ("https://example.com/alpha", "https://news.example.org/", "https://example.com/beta"):
+            h, oid, recalc = con.execute(
+                "SELECT url_hash, origin_id, recalc_frecency FROM moz_places WHERE url=?", (url,)).fetchone()
+            self.assertEqual(h, z.places_url_hash(url))
+            self.assertIsNotNone(oid)
+            self.assertEqual(recalc, 1)
+            visits = con.execute("SELECT count(*) FROM moz_historyvisits WHERE place_id="
+                                 "(SELECT id FROM moz_places WHERE url=?)", (url,)).fetchone()[0]
+            self.assertEqual(visits, 1)
+        con.close()
+
+    def test_idempotent(self):
+        z.import_history_into_places(self.places, self.rows)
+        n = self._count("moz_places")
+        added, skipped, _ = z.import_history_into_places(self.places, self.rows)
+        self.assertEqual(added, 0)
+        self.assertEqual(self._count("moz_places"), n)
+
+    def test_unknown_schema_version_refused_and_db_untouched(self):
+        make_places(self.places, version=250)
+        before = self.places.read_bytes()
+        with self.assertRaises(z.SchemaProblem):
+            z.import_history_into_places(self.places, self.rows)
+        self.assertEqual(self.places.read_bytes(), before)
+
+    def test_force_allows_unknown_version(self):
+        make_places(self.places, version=250)
+        added, _skipped, _backup = z.import_history_into_places(self.places, self.rows, force=True)
+        self.assertEqual(added, 3)
+
+    def test_rollback_restores_on_error(self):
+        # A row with a non-string url makes the INSERT raise partway through.
+        # The whole DB must come back byte-for-byte from the backup.
+        before = self.places.read_bytes()
+        bad = [("https://good.example/1", "ok", 1, 1), (12345, "bad url", 1, 1)]
+        with self.assertRaises(Exception):
+            z.import_history_into_places(self.places, bad)
+        self.assertEqual(self.places.read_bytes(), before)
+
+
 class TestHistory(unittest.TestCase):
     def setUp(self):
         self.sb = Sandbox()
