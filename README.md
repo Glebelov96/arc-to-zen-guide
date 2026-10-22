@@ -6,7 +6,11 @@
 
 ## Quick start: one command
 
-`arc2zen.py` does the whole migration for you. It finds your Arc sidebar, picks the Zen profile you actually use, checks that Zen is closed, makes a backup, and rebuilds your Spaces, folders, pinned tabs and Favorites in Zen. You don't need to install anything: it runs on the Python 3 that comes with macOS.
+`arc2zen.py` does the whole migration for you. It finds your Arc sidebar, picks the Zen profile you actually use, checks that Zen is closed, makes a backup, and rebuilds your Spaces, folders, pinned tabs and Favorites in Zen. Then it reads the result back and restores the backup if anything doesn't match. It needs no extra installs: just Python 3.8+.
+
+> Not technical? The same steps for non-technical people: **[arctozen.pages.dev](https://arctozen.pages.dev)**
+
+### Mac
 
 1. Quit Zen with **Cmd+Q**.
 2. Open **Terminal** and run:
@@ -19,9 +23,35 @@ cd ~ && curl -fsSLO https://raw.githubusercontent.com/Glebelov96/arc-to-zen-guid
 
 If macOS asks to install **Command Line Developer Tools**, click Install and run the command again.
 
+### Windows (experimental)
+
+1. Install Python from [python.org](https://www.python.org/downloads/windows/) if you don't have it, then close every Zen window.
+2. Open **PowerShell** and run:
+
+```powershell
+cd ~; iwr https://raw.githubusercontent.com/Glebelov96/arc-to-zen-guide/main/arc2zen.py -OutFile arc2zen.py; py arc2zen.py
+```
+
+Windows support is tested with automated tests only, not yet on a real Windows PC. Reports are welcome in [Issues](https://github.com/Glebelov96/arc-to-zen-guide/issues).
+
+### Not ready to switch yet? Save your Arc now
+
+Arc stops working on December 22, 2026. This saves a copy of your sidebar to your Documents folder in seconds, so you can migrate later, even after Arc is gone:
+
+```bash
+python3 arc2zen.py --save-arc
+```
+
+You get an `Arc backup YYYY-MM-DD` folder with Arc's sidebar file, older copies Arc kept, and a bookmarks file any browser can import. When you later run `arc2zen.py` without Arc, it finds that folder by itself.
+
+### All commands
+
+On Windows, use `py` instead of `python3`.
+
 | Command | What it does |
 |---|---|
 | `python3 arc2zen.py` | Guided migration |
+| `python3 arc2zen.py --save-arc` | Save a copy of your Arc sidebar to Documents |
 | `python3 arc2zen.py --list` | Show your Arc Spaces and Zen profiles, change nothing |
 | `python3 arc2zen.py --dry-run` | Show what would happen, change nothing |
 | `python3 arc2zen.py --undo` | Restore Zen from a backup (quit Zen first) |
@@ -35,7 +65,12 @@ Compared with running the scripts by hand, it:
 - **refuses to run while Zen is open**;
 - **keeps every backup**, each with a timestamp, so `--undo` can always get back to how Zen looked before the first run;
 - **leaves your open tabs alone**, replacing only pinned tabs and folders in Spaces with the same name;
-- **makes Essentials show in every Space**, like Arc Favorites.
+- **makes Essentials show in every Space**, like Arc Favorites;
+- **writes folders the way Zen itself does**: each folder gets Zen's placeholder tab, its order is recorded, and tabs open in the Space's own container. This is based on a real Zen session from October 2026;
+- **stops if Zen's format has changed**, instead of guessing, and **checks its own work** after saving;
+- **works without Arc** after December 22, using a copy saved with `--save-arc`.
+
+There's a test suite with no dependencies: `python3 -m unittest discover -s tests -v`.
 
 Prefer to see every step? The manual method below does the same thing with the original tool.
 

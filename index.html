@@ -166,6 +166,7 @@
   footer .right { text-align: right; }
   @media (max-width: 760px) { footer { grid-template-columns: 1fr; } footer .right { text-align: left; } }
 
+  code { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: .88em; overflow-wrap: anywhere; }
   .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 </style>
 </head>
@@ -177,6 +178,7 @@
     <nav class="nav mono" aria-label="Sections">
       <a href="#moves">What moves</a>
       <a href="#steps">Steps</a>
+      <a href="#save">Save Arc</a>
       <a href="#undo">Undo</a>
       <a href="#faq">Questions</a>
     </nav>
@@ -208,8 +210,8 @@
 
 <div class="ticker mono" aria-hidden="true">
   <div class="ticker-track">
-    <span>Spaces <em>→</em> Spaces</span><span>Folders inside folders <em>→</em> kept</span><span>Pinned tabs <em>→</em> same order</span><span>Favorites <em>→</em> Essentials</span><span>Backup before every change</span><span>One-step undo</span><span><em>Arc shuts down 22.12.2026</em></span>
-    <span>Spaces <em>→</em> Spaces</span><span>Folders inside folders <em>→</em> kept</span><span>Pinned tabs <em>→</em> same order</span><span>Favorites <em>→</em> Essentials</span><span>Backup before every change</span><span>One-step undo</span><span><em>Arc shuts down 22.12.2026</em></span>
+    <span>Spaces <em>→</em> Spaces</span><span>Folders inside folders <em>→</em> kept</span><span>Pinned tabs <em>→</em> same order</span><span>Favorites <em>→</em> Essentials</span><span>Backup before every change</span><span>One-step undo</span><span>Not ready? Save Arc for later</span><span><em>Arc shuts down 22.12.2026</em></span>
+    <span>Spaces <em>→</em> Spaces</span><span>Folders inside folders <em>→</em> kept</span><span>Pinned tabs <em>→</em> same order</span><span>Favorites <em>→</em> Essentials</span><span>Backup before every change</span><span>One-step undo</span><span>Not ready? Save Arc for later</span><span><em>Arc shuts down 22.12.2026</em></span>
   </div>
 </div>
 
@@ -291,6 +293,23 @@
 
   <hr class="rule">
 
+  <section class="sec" id="save" aria-labelledby="h-save">
+    <div class="sec-label">
+      <h2 id="h-save">Not ready yet?</h2>
+      <p class="mono">Save your Arc now<br>Switch whenever you like</p>
+    </div>
+    <div>
+      <p>Arc stops working on December 22. This saves a copy of your sidebar to your Documents folder in a few seconds. When you're ready, even after Arc is gone, the five steps above use that copy automatically.</p>
+      <div class="cmd">
+        <div class="cmd-head"><span class="mono">Terminal</span><button class="copy" type="button" data-copy="save-cmd">Copy</button></div>
+        <pre id="save-cmd">cd ~ &amp;&amp; curl -fsSLO https://raw.githubusercontent.com/Glebelov96/arc-to-zen-guide/main/arc2zen.py &amp;&amp; python3 arc2zen.py --save-arc</pre>
+      </div>
+      <div class="note"><span class="mono">You'll get</span>A folder called “Arc backup” plus today's date, with your sidebar and a bookmarks file any browser can import.</div>
+    </div>
+  </section>
+
+  <hr class="rule">
+
   <section class="sec" id="undo" aria-labelledby="h-undo">
     <div class="sec-label">
       <h2 id="h-undo">Undo</h2>
@@ -335,7 +354,7 @@
       </details>
       <details>
         <summary>I'm on Windows.</summary>
-        <p>The helper is Mac-only for now. On Windows, use Arc's own option to export a list of your tabs, import it into Zen as bookmarks, then pin the ones you want.</p>
+        <p>Windows support is new and still experimental. Install Python from python.org, close every Zen window, open PowerShell, and paste: <code>cd ~; iwr https://raw.githubusercontent.com/Glebelov96/arc-to-zen-guide/main/arc2zen.py -OutFile arc2zen.py; py arc2zen.py</code>. If anything goes wrong, <code>py arc2zen.py --undo</code> puts Zen back.</p>
       </details>
     </div>
   </section>

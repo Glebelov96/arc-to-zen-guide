@@ -1,27 +1,34 @@
 #!/usr/bin/env python3
 """
 arc2zen — move your Arc sidebar (Spaces, nested folders, pinned tabs,
-Favorites) into Zen Browser on macOS, in one command.
+Favorites) into Zen Browser, in one command. macOS and Windows.
 
     python3 arc2zen.py              # guided migration
+    python3 arc2zen.py --save-arc   # keep a copy of your Arc sidebar for later
     python3 arc2zen.py --list       # show what was found, change nothing
+    python3 arc2zen.py --dry-run    # show the plan, change nothing
     python3 arc2zen.py --undo       # put Zen back the way it was
     python3 arc2zen.py --bookmarks arc.html   # just export a bookmarks file
 
-What it does, in order:
-  1. Reads Arc's sidebar file (~/Library/Application Support/Arc/StorableSidebar.json).
-  2. Finds every Zen profile and picks the one Zen actually uses
-     (asks you if it isn't obvious) — the step most guides get wrong.
-  3. Refuses to continue while Zen is running.
-  4. Makes a timestamped backup that later runs never overwrite.
-  5. Rebuilds each Arc Space as a Zen Space with the same folders and pins.
+(On Windows, use `py` instead of `python3`.)
 
-No installs needed: works with the Python 3 that ships with macOS.
+What it does, in order:
+  1. Reads Arc's sidebar file (StorableSidebar.json), or a copy saved with --save-arc.
+  2. Finds every Zen profile and picks the one Zen actually uses
+     (asks you if it isn't obvious).
+  3. Refuses to continue while Zen is running.
+  4. Checks Zen's session file is in a format it knows; stops otherwise.
+  5. Makes a timestamped backup that later runs never overwrite.
+  6. Rebuilds each Arc Space as a Zen Space with the same folders and pins,
+     written the way Zen itself writes folders.
+  7. Reads the result back; if anything is off, restores the backup.
+
+No installs needed: works with a standard Python 3.8+.
 
 Guide and source: https://github.com/Glebelov96/arc-to-zen-guide
 
 ---------------------------------------------------------------------------
-The Zen session builders below are adapted from arc-to-zen-migration
+Parts of the Zen session builders are adapted from arc-to-zen-migration
 (https://github.com/shub-rajput/arc-to-zen-migration), used under the MIT
 License:
 
@@ -58,19 +65,66 @@ import time
 import uuid
 from pathlib import Path
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 
-ARC_DIR = Path.home() / "Library" / "Application Support" / "Arc"
-ZEN_DIR = Path.home() / "Library" / "Application Support" / "zen"
+IS_WINDOWS = os.name == "nt"
+IS_MAC = sys.platform == "darwin"
+RUN = "py arc2zen.py" if IS_WINDOWS else "python3 arc2zen.py"
+
 SESSION_FILE = "zen-sessions.jsonlz4"
-BACKUP_TAG = ".arc2zen-"          # zen-sessions.jsonlz4.arc2zen-20261022-231500.bak
+BACKUP_TAG = ".arc2zen-"          # zen-sessions.jsonlz4.arc2zen-20261022-231500-01.bak
 MOZLZ4_MAGIC = b"mozLz40\x00"
 ESSENTIALS_PREF = 'user_pref("zen.workspaces.separate-essentials", false);'
+SAVE_DIR_PREFIX = "Arc backup "
+
+# The folder shape Zen writes today (captured from a real session, Oct 2026).
+# If Zen's own folders carry fields beyond these, its format has moved on and
+# we stop instead of guessing.
+KNOWN_FOLDER_KEYS = {
+    "pinned", "splitViewGroup", "id", "name", "collapsed", "saveOnWindowClose",
+    "parentId", "prevSiblingInfo", "emptyTabIds", "userIcon", "workspaceId",
+}
+REQUIRED_FOLDER_KEYS = {"id", "workspaceId"}
+KNOWN_SPACE_KEYS = {"uuid", "name", "icon", "theme", "containerTabId",
+                    "hasCollapsedPinnedTabs", "position"}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Where things live
+# ─────────────────────────────────────────────────────────────────────────────
+def home():
+    return Path.home()
+
+
+def arc_dir_candidates():
+    if os.environ.get("ARC2ZEN_ARC_DIR"):  # for tests and unusual setups
+        return [Path(os.environ["ARC2ZEN_ARC_DIR"])]
+    if IS_WINDOWS:
+        base = Path(os.environ.get("LOCALAPPDATA", home() / "AppData" / "Local")) / "Packages"
+        return sorted(base.glob("TheBrowserCompany.Arc*/LocalCache/Local/Arc"))
+    return [home() / "Library" / "Application Support" / "Arc"]
+
+
+def zen_dir():
+    if os.environ.get("ARC2ZEN_ZEN_DIR"):
+        return Path(os.environ["ARC2ZEN_ZEN_DIR"])
+    if IS_WINDOWS:
+        return Path(os.environ.get("APPDATA", home() / "AppData" / "Roaming")) / "zen"
+    if IS_MAC:
+        return home() / "Library" / "Application Support" / "zen"
+    return home() / ".zen"
+
+
+def documents_dir():
+    d = home() / "Documents"
+    return d if d.is_dir() else home()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Terminal output
 # ─────────────────────────────────────────────────────────────────────────────
+if IS_WINDOWS:
+    os.system("")  # turns on colour codes in the Windows console
 _COLOR = sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
 
 
@@ -332,6 +386,18 @@ def count_tree(nodes):
     return folders, tabs
 
 
+def find_arc_sidebar():
+    """Arc's own file, or the newest copy saved with --save-arc."""
+    for d in arc_dir_candidates():
+        p = d / "StorableSidebar.json"
+        if p.exists():
+            return p, False
+    saved = sorted(documents_dir().glob(SAVE_DIR_PREFIX + "*/StorableSidebar.json"))
+    if saved:
+        return saved[-1], True
+    return None, False
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Zen: profiles and the session store
 # ─────────────────────────────────────────────────────────────────────────────
@@ -361,6 +427,17 @@ class ZenProfile:
 
     def is_running(self):
         """True if a running Zen holds this profile's lock."""
+        if IS_WINDOWS:
+            lock = self.path / "parent.lock"
+            if not lock.exists():
+                return False
+            try:
+                with open(lock, "a"):
+                    return False
+            except PermissionError:
+                return True
+            except OSError:
+                return False
         lock = self.path / ".parentlock"
         if not lock.exists():
             return False
@@ -384,17 +461,22 @@ class ZenProfile:
 
 def zen_process_running():
     try:
+        if IS_WINDOWS:
+            out = subprocess.run(["tasklist", "/FI", "IMAGENAME eq zen.exe", "/NH"],
+                                 capture_output=True, text=True)
+            return "zen.exe" in out.stdout.lower()
         out = subprocess.run(["pgrep", "-f", "/Contents/MacOS/zen"],
                              capture_output=True, text=True)
         return out.returncode == 0 and bool(out.stdout.strip())
-    except FileNotFoundError:
+    except (FileNotFoundError, OSError):
         return False
 
 
-def find_zen_profiles(zen_dir=ZEN_DIR):
+def find_zen_profiles(base=None):
     """Every Zen profile folder; the ones an install uses by default are flagged."""
+    base = base or zen_dir()
     defaults = set()
-    ini = zen_dir / "installs.ini"
+    ini = base / "installs.ini"
     if ini.exists():
         cp = configparser.ConfigParser(interpolation=None, strict=False)
         try:
@@ -402,18 +484,20 @@ def find_zen_profiles(zen_dir=ZEN_DIR):
             for sec in cp.sections():
                 d = cp.get(sec, "Default", fallback=None)
                 if d:
-                    defaults.add(str((zen_dir / d).resolve()) if not os.path.isabs(d) else str(Path(d).resolve()))
+                    p = Path(d) if os.path.isabs(d) else base / d
+                    defaults.add(str(p.resolve()))
         except configparser.Error:
             pass
     paths = set()
-    pdir = zen_dir / "Profiles"
-    if pdir.is_dir():
-        paths.update(p for p in pdir.iterdir() if p.is_dir())
+    for parent in (base / "Profiles", base):
+        if parent.is_dir():
+            paths.update(p for p in parent.iterdir()
+                         if p.is_dir() and (parent.name == "Profiles" or (p / SESSION_FILE).exists()))
     for d in defaults:
         if Path(d).is_dir():
             paths.add(Path(d))
-    profiles = [ZenProfile(p, str(Path(p).resolve()) in defaults) for p in paths]
-    return sorted(profiles, key=lambda p: p.name)
+    profiles = {str(p.resolve()): ZenProfile(p, str(p.resolve()) in defaults) for p in paths}
+    return sorted(profiles.values(), key=lambda p: p.name)
 
 
 def recommend_profile(profiles):
@@ -424,18 +508,63 @@ def recommend_profile(profiles):
     return max(usable, key=lambda i: (profiles[i].install_default, profiles[i].modified))
 
 
+class SchemaProblem(Exception):
+    pass
+
+
+def check_schema(data):
+    """Return a list of warnings; raise SchemaProblem if writing would be unsafe."""
+    if not isinstance(data, dict):
+        raise SchemaProblem("the session isn't a JSON object")
+    for key in ("tabs", "spaces", "folders", "groups"):
+        if key in data and not isinstance(data[key], list):
+            raise SchemaProblem(f"'{key}' isn't a list")
+    for t in data.get("tabs", []):
+        if not isinstance(t, dict) or not isinstance(t.get("entries", []), list):
+            raise SchemaProblem("a tab has an unexpected shape")
+    for s in data.get("spaces", []):
+        if not isinstance(s, dict) or "uuid" not in s:
+            raise SchemaProblem("a Space has no id")
+    folders = data.get("folders", [])
+    groups = data.get("groups", [])
+    for f in folders:
+        if not isinstance(f, dict) or not REQUIRED_FOLDER_KEYS <= set(f):
+            raise SchemaProblem("a folder is missing its id or Space")
+    if {f["id"] for f in folders} != {g.get("id") for g in groups if isinstance(g, dict)}:
+        raise SchemaProblem("folders and groups don't match up")
+    warnings = []
+    new_folder_keys = set().union(*[set(f) for f in folders]) - KNOWN_FOLDER_KEYS if folders else set()
+    if new_folder_keys:
+        warnings.append("Zen folders have fields this tool doesn't know yet: "
+                        + ", ".join(sorted(new_folder_keys)))
+    new_space_keys = set().union(*[set(s) for s in data.get("spaces", [])]) - KNOWN_SPACE_KEYS \
+        if data.get("spaces") else set()
+    if new_space_keys:
+        warnings.append("Zen Spaces have fields this tool doesn't know yet: "
+                        + ", ".join(sorted(new_space_keys)))
+    return warnings
+
+
 class ZenSession:
+    """Builds Spaces, folders and pins the way Zen itself stores them:
+    every folder starts with an empty placeholder tab, lists its (and its
+    sub-folders') placeholders in emptyTabIds, and records what comes
+    before it in prevSiblingInfo."""
+
     def __init__(self, profile):
         self.profile = profile
         self.data = mozlz4_read(profile.session)
         for key in ("tabs", "folders", "groups", "spaces"):
             self.data.setdefault(key, [])
-        self._base = int(time.time() * 1000)
+        self._ms = int(time.time() * 1000)
         self._ctr = 0
 
-    def _id(self):
+    def _folder_id(self):
         self._ctr += 1
-        return f"{self._base}-{self._ctr}"
+        return f"{self._ms}-{self._ctr}"
+
+    def _sync_id(self):
+        return f"{self._ms}-{uuid.uuid4()}"
 
     def spaces(self):
         return self.data["spaces"]
@@ -446,11 +575,17 @@ class ZenSession:
                 return s["uuid"]
         return None
 
+    def container_of(self, wid):
+        for s in self.spaces():
+            if s.get("uuid") == wid:
+                return s.get("containerTabId") or 0
+        return 0
+
     def ensure_space(self, name, icon=None):
         existing = self.find_space(name)
         if existing:
             return existing, False
-        pos = max([s.get("position", 0) for s in self.spaces()], default=0) + 1000
+        pos = max([s.get("position", 0) or 0 for s in self.spaces()], default=0) + 1000
         wid = "{" + str(uuid.uuid4()) + "}"
         self.spaces().append({
             "uuid": wid, "name": name, "icon": icon or "🌐",
@@ -469,54 +604,69 @@ class ZenSession:
             if t.get("groupId") not in drop
             and not (t.get("zenWorkspace") == wid and t.get("pinned"))]
 
-    def add_folder(self, name, wid, parent_id=None, collapsed=True):
-        fid = self._id()
-        self.data["folders"].append({
-            "pinned": True, "splitViewGroup": False, "id": fid, "name": name,
-            "collapsed": collapsed, "saveOnWindowClose": True, "parentId": parent_id,
-            "prevSiblingInfo": None, "emptyTabIds": [], "userIcon": "",
-            "workspaceId": wid,
-        })
-        self.data["groups"].append({
-            "pinned": True, "splitView": False, "id": fid, "name": name,
-            "color": "zen-workspace-color", "collapsed": collapsed,
-            "saveOnWindowClose": True,
-        })
-        return fid
-
-    def add_tab(self, url, title, wid=None, folder_id=None, essential=False):
-        title = title or url
+    def _tab(self, url, title, wid, folder_id=None, essential=False, empty=False):
+        sync = self._sync_id()
+        entry = {"url": url, "triggeringPrincipal_base64": "{\"3\":{}}"}
+        if title and not empty:
+            entry["title"] = title
         tab = {
-            "entries": [{"url": url, "title": title,
-                         "triggeringPrincipal_base64": "{\"3\":{}}"}],
+            "entries": [entry],
             "lastAccessed": int(time.time() * 1000),
             "pinned": True, "hidden": False,
-            "zenWorkspace": wid, "zenSyncId": self._id(), "zenEssential": essential,
+            "zenWorkspace": wid, "zenSyncId": sync, "zenEssential": essential,
             "zenDefaultUserContextId": None, "zenPinnedIcon": None,
-            "zenIsEmpty": False, "zenHasStaticIcon": False, "zenGlanceId": None,
+            "zenIsEmpty": empty, "zenHasStaticIcon": False, "zenGlanceId": None,
             "zenIsGlance": False,
-            "_zenPinnedInitialState": {"entry": {"url": url, "title": title}, "image": None},
-            "zenLiveFolderItemId": None, "searchMode": None, "userContextId": 0,
+            "_zenPinnedInitialState": {"entry": dict(entry), "image": None},
+            "zenLiveFolderItemId": None, "searchMode": None,
+            "userContextId": 0 if wid is None else self.container_of(wid),
             "attributes": {}, "index": 1, "userTypedValue": "", "userTypedClear": 0,
             "image": None,
         }
         if folder_id:
             tab["groupId"] = folder_id
         self.data["tabs"].append(tab)
+        return sync
 
-    def add_tree(self, nodes, wid, parent=None):
+    def _folder(self, name, wid, parent_id, prev):
+        fid = self._folder_id()
+        folder = {
+            "pinned": True, "splitViewGroup": False, "id": fid, "name": name,
+            "collapsed": True, "saveOnWindowClose": True, "parentId": parent_id,
+            "prevSiblingInfo": prev, "emptyTabIds": [], "userIcon": "",
+            "workspaceId": wid,
+        }
+        self.data["folders"].append(folder)
+        self.data["groups"].append({
+            "pinned": True, "splitView": False, "id": fid, "name": name,
+            "color": "zen-workspace-color", "collapsed": True,
+            "saveOnWindowClose": True,
+        })
+        return folder
+
+    def add_tree(self, nodes, wid, parent=None, first_prev=None):
+        """Add nodes in order. Returns the placeholder tab ids created inside."""
+        prev = first_prev or {"type": "start", "id": None}
+        placeholders = []
         for n in nodes:
             if n["type"] == "folder":
-                fid = self.add_folder(n["name"], wid, parent_id=parent)
-                self.add_tree(n["children"], wid, parent=fid)
+                folder = self._folder(n["name"], wid, parent, prev)
+                own = self._tab("about:blank", None, wid, folder_id=folder["id"], empty=True)
+                inner = self.add_tree(n["children"], wid, parent=folder["id"],
+                                      first_prev={"type": "tab", "id": own})
+                folder["emptyTabIds"] = [own] + inner
+                placeholders += [own] + inner
+                prev = {"type": "group", "id": folder["id"]}
             else:
-                self.add_tab(n["url"], n["title"], wid=wid, folder_id=parent)
+                sync = self._tab(n["url"], n["title"], wid, folder_id=parent)
+                prev = {"type": "tab", "id": sync}
+        return placeholders
 
     def set_global_essentials(self, favorites):
         self.data["tabs"] = [t for t in self.data["tabs"]
                              if not (t.get("zenEssential") and t.get("zenWorkspace") is None)]
         for f in favorites:
-            self.add_tab(f["url"], f["title"], wid=None, essential=True)
+            self._tab(f["url"], f["title"], None, essential=True)
 
     def save(self):
         mozlz4_write(self.profile.session, self.data)
@@ -579,15 +729,21 @@ def bookmarks_html(spaces):
 # ─────────────────────────────────────────────────────────────────────────────
 # Commands
 # ─────────────────────────────────────────────────────────────────────────────
-def load_arc(path_arg):
-    path = Path(path_arg).expanduser() if path_arg else ARC_DIR / "StorableSidebar.json"
-    if not path.exists():
-        fail(f"Arc's sidebar file wasn't found at {path}",
-             "Is Arc installed on this Mac? You can also point to a copy with --arc PATH.")
+def load_arc(path_arg, quiet=False):
+    if path_arg:
+        path, from_save = Path(path_arg).expanduser(), False
+    else:
+        path, from_save = find_arc_sidebar()
+    if not path or not path.exists():
+        fail("Arc's sidebar file wasn't found.",
+             "Is Arc installed on this computer? If you saved it earlier, point to the copy:\n"
+             f"  {RUN} --arc \"path/to/StorableSidebar.json\"")
     try:
         arc = ArcSidebar(path)
     except (ValueError, json.JSONDecodeError) as e:
         fail(f"Couldn't read {path}: {e}")
+    if from_save and not quiet:
+        ok(f"Using your saved copy: {path.parent.name}")
     return arc
 
 
@@ -602,12 +758,12 @@ def print_arc(spaces, favorites):
 def pick_profile(args, ask):
     if args.profile:
         p = Path(args.profile).expanduser()
-        if not (p / SESSION_FILE).exists() and (ZEN_DIR / "Profiles" / args.profile).exists():
-            p = ZEN_DIR / "Profiles" / args.profile
+        if not (p / SESSION_FILE).exists() and (zen_dir() / "Profiles" / args.profile).exists():
+            p = zen_dir() / "Profiles" / args.profile
         prof = ZenProfile(p)
         if not prof.has_session:
             fail(f"No {SESSION_FILE} in {p}",
-                 "Open Zen once with this profile, quit it (Cmd+Q), and try again.")
+                 "Open Zen once with this profile, quit it, and try again.")
         ok(f"Using the profile you chose: {prof.name}")
         return prof
 
@@ -615,7 +771,7 @@ def pick_profile(args, ask):
     usable = [p for p in profiles if p.has_session]
     if not usable:
         fail("No Zen profile with saved tabs was found.",
-             "Install Zen, open it once, quit it with Cmd+Q, then run this again.")
+             "Install Zen, open it once, quit it completely, then run this again.")
     rec = recommend_profile(profiles)
 
     if len(usable) == 1:
@@ -639,8 +795,8 @@ def pick_profile(args, ask):
         info(f"  {i + 1}. {bold(p.name)}  {dim('saved ' + when)}"
              + (f"  ({'; '.join(tags)})" if tags else ""))
         info(f"     Spaces: {spaces_txt}")
-    info(dim("  Not sure? Open Zen, rename or create a Space, quit Zen, run this again,"
-             " and pick the profile that shows it."))
+    info(dim("  Not sure? Open Zen, create a Space with an unusual name, quit Zen, run this"
+             " again, and pick the profile that shows it."))
     while True:
         idx = ask.choose("Which profile should I use?", len(profiles), rec)
         if profiles[idx].has_session:
@@ -651,19 +807,65 @@ def pick_profile(args, ask):
 
 def require_zen_closed(profile):
     if profile.is_running() or zen_process_running():
-        fail("Zen is open. Quit it completely with Cmd+Q, then run this again.",
+        how = "close every Zen window and wait a few seconds" if IS_WINDOWS else "quit it completely with Cmd+Q"
+        fail(f"Zen is open. Please {how}, then run this again.",
              "Zen saves its tabs when it quits, so it would overwrite the migration.")
     ok("Zen is closed")
 
 
 def cmd_bookmarks(args):
-    arc = load_arc(args.arc)
+    arc = load_arc(args.arc, quiet=True)
     spaces = arc.spaces()
     out = Path(args.bookmarks).expanduser()
     out.write_text(bookmarks_html(spaces), encoding="utf-8")
     total = sum(count_tree(s["tree"])[1] for s in spaces)
     print(f"{green('✓')} Wrote {total} links from {len(spaces)} Spaces to {out}")
-    print("  Import in Zen: Cmd+Shift+O → Import and Backup → Import Bookmarks from HTML…")
+    print("  Import in Zen: Library (Cmd/Ctrl+Shift+O) → Import and Backup → Import Bookmarks from HTML…")
+
+
+def cmd_save_arc(args):
+    print(bold(f"arc2zen {VERSION}") + dim(" — save a copy of your Arc sidebar"))
+    step(1, "Reading Arc")
+    src = Path(args.arc).expanduser() if args.arc else None
+    if not src:
+        for d in arc_dir_candidates():
+            if (d / "StorableSidebar.json").exists():
+                src = d / "StorableSidebar.json"
+                break
+    if not src or not src.exists():
+        fail("Arc's sidebar file wasn't found on this computer.",
+             "Is Arc installed? This needs to run on the computer where you use Arc.")
+    arc = load_arc(str(src), quiet=True)
+    spaces = arc.spaces()
+    print_arc(spaces, arc.favorites())
+
+    step(2, "Saving")
+    stamp = datetime.date.today().isoformat()
+    dest = documents_dir() / f"{SAVE_DIR_PREFIX}{stamp}"
+    n = 2
+    while dest.exists():
+        dest = documents_dir() / f"{SAVE_DIR_PREFIX}{stamp} ({n})"
+        n += 1
+    dest.mkdir(parents=True)
+    shutil.copy2(src, dest / "StorableSidebar.json")
+    older = sorted(src.parent.glob("StorableSidebar.*.json"))
+    if older:
+        (dest / "older copies").mkdir()
+        for f in older:
+            shutil.copy2(f, dest / "older copies" / f.name)
+    (dest / "Arc pinned tabs.html").write_text(bookmarks_html(spaces), encoding="utf-8")
+    (dest / "README.txt").write_text(
+        "Your Arc sidebar, saved by arc2zen on " + stamp + ".\n\n"
+        "StorableSidebar.json   Arc's own file with every Space, folder and pinned tab.\n"
+        "Arc pinned tabs.html   The same links as a bookmarks file any browser can import.\n"
+        "older copies           Earlier versions Arc kept automatically.\n\n"
+        "To rebuild your sidebar in Zen later, run arc2zen; it finds this folder by itself.\n"
+        "Guide: https://arctozen.pages.dev\n", encoding="utf-8")
+    ok(f"Saved to {dest}")
+    ok(f"{len(older)} older copies kept" if older else "Sidebar saved")
+    ok("Bookmarks file: Arc pinned tabs.html")
+    print(f"\n{green(bold('Done.'))} Your Arc sidebar is safe, even after Arc shuts down.")
+    print(dim(f"When you're ready to switch, run:  {RUN}"))
 
 
 def cmd_list(args, ask):
@@ -720,6 +922,19 @@ def cmd_undo(args, ask):
     print(f"\n{green('Done.')} Open Zen to check.")
 
 
+def verify_written(prof, expected_spaces, expected_folders, expected_tabs):
+    """Re-read the saved session and check every Space landed as planned."""
+    data = mozlz4_read(prof.session)
+    check_schema(data)
+    for name, wid in expected_spaces.items():
+        folders = sum(1 for f in data["folders"] if f.get("workspaceId") == wid)
+        tabs = sum(1 for t in data["tabs"] if t.get("zenWorkspace") == wid
+                   and t.get("pinned") and not t.get("zenIsEmpty") and not t.get("zenEssential"))
+        if folders != expected_folders[name] or tabs != expected_tabs[name]:
+            raise SchemaProblem(f"{name}: expected {expected_folders[name]} folders and "
+                                f"{expected_tabs[name]} tabs, found {folders} and {tabs}")
+
+
 def cmd_migrate(args, ask):
     print(bold(f"arc2zen {VERSION}") + dim(" — move your Arc sidebar into Zen"))
 
@@ -747,9 +962,21 @@ def cmd_migrate(args, ask):
 
     try:
         session = ZenSession(prof)
+        warnings = check_schema(session.data)
+    except SchemaProblem as e:
+        fail(f"Zen's session file isn't in a format this version knows ({e}).",
+             "Nothing was changed. Zen may have updated; check for a newer arc2zen:\n"
+             "  https://github.com/Glebelov96/arc-to-zen-guide")
     except Exception as e:
-        fail(f"Couldn't read Zen's session file: {e}",
-             "Your Zen version may store tabs differently. Nothing was changed.")
+        fail(f"Couldn't read Zen's session file: {e}", "Nothing was changed.")
+    ok("Zen's session format looks familiar")
+    if warnings:
+        for w in warnings:
+            warn(w)
+        warn("Zen may have changed how it stores folders. The migration might not look right.")
+        if not args.force and (args.yes or not ask.yes_no("Continue anyway? A backup is made first.", False)):
+            fail("Stopped. Nothing was changed.",
+                 f"To try anyway: {RUN} --force   (you can always undo with --undo)")
 
     step(4, "Plan")
     replacing = [s["name"] for s in spaces if session.find_space(s["name"])]
@@ -776,11 +1003,13 @@ def cmd_migrate(args, ask):
     step(5, "Migrating")
     backup = make_backup(prof)
     ok(f"Backup saved: {backup.name}")
+    expected_spaces, exp_f, exp_t = {}, {}, {}
     for s in spaces:
         wid, _ = session.ensure_space(s["name"], icon=s["icon"])
         session.clear_space(wid)
         session.add_tree(s["tree"], wid)
         f, t = count_tree(s["tree"])
+        expected_spaces[s["name"]], exp_f[s["name"]], exp_t[s["name"]] = wid, f, t
         ok(f"{s['name']}: {f} folders, {t} pinned tabs")
     if use_favs:
         session.set_global_essentials(favorites)
@@ -788,31 +1017,43 @@ def cmd_migrate(args, ask):
         if enable_global_essentials(prof):
             ok("Essentials set to show in every Space (like Arc Favorites)")
     session.save()
-    ok("Saved")
+
+    try:
+        verify_written(prof, expected_spaces, exp_f, exp_t)
+    except Exception as e:
+        shutil.copy2(backup, prof.session)
+        fail(f"The saved result didn't check out ({e}), so Zen was put back as it was.",
+             "Please report this: https://github.com/Glebelov96/arc-to-zen-guide/issues")
+    ok("Saved and checked")
 
     print(f"\n{green(bold('Done.'))} Open Zen — your Arc Spaces are in the sidebar.")
-    print(dim("Something off? Quit Zen and run:  python3 arc2zen.py --undo"))
+    print(dim(f"Something off? Close Zen and run:  {RUN} --undo"))
 
 
 def main():
     ap = argparse.ArgumentParser(
         prog="arc2zen",
         description="Move your Arc sidebar (Spaces, folders, pinned tabs, Favorites) into Zen Browser.")
+    ap.add_argument("--save-arc", action="store_true",
+                    help="save a copy of your Arc sidebar to Documents, to migrate later")
     ap.add_argument("--list", action="store_true", help="show Arc Spaces and Zen profiles; change nothing")
     ap.add_argument("--dry-run", action="store_true", help="show the plan; change nothing")
     ap.add_argument("--undo", action="store_true", help="restore Zen from an arc2zen backup")
     ap.add_argument("--bookmarks", metavar="FILE", help="only export Arc pinned tabs as a bookmarks HTML file")
-    ap.add_argument("--arc", metavar="PATH", help="path to StorableSidebar.json (default: Arc's own)")
+    ap.add_argument("--arc", metavar="PATH", help="path to StorableSidebar.json (default: Arc's own or a saved copy)")
     ap.add_argument("--profile", metavar="PATH", help="Zen profile folder or its name in Profiles/")
     ap.add_argument("--spaces", metavar="A,B", help="only these Arc Spaces (comma-separated)")
     ap.add_argument("--no-favorites", action="store_true", help="don't turn Arc Favorites into Essentials")
+    ap.add_argument("--force", action="store_true", help="continue even if Zen's format has new fields")
     ap.add_argument("-y", "--yes", action="store_true", help="don't ask questions; use the recommended answers")
     ap.add_argument("--version", action="version", version=f"arc2zen {VERSION}")
     args = ap.parse_args()
 
     ask = Prompt(assume_yes=args.yes)
     try:
-        if args.bookmarks:
+        if args.save_arc:
+            cmd_save_arc(args)
+        elif args.bookmarks:
             cmd_bookmarks(args)
         elif args.list:
             cmd_list(args, ask)
