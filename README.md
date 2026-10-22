@@ -2,10 +2,46 @@
 
 **Arc is shutting down on December 22, 2026.** Here's how I moved **2 Spaces, 54 nested folders, 167 pinned links and 26 Favorites** from Arc into [Zen Browser](https://zen-browser.app/) in one go. It also covers the one trap that made my first attempt silently do nothing.
 
-> Tested on macOS, October 2026 · takes about 15 minutes
+> Tested on macOS, October 2026
+
+## Quick start: one command
+
+`arc2zen.py` does the whole migration for you. It finds your Arc sidebar, picks the Zen profile you actually use, checks that Zen is closed, makes a backup, and rebuilds your Spaces, folders, pinned tabs and Favorites in Zen. You don't need to install anything: it runs on the Python 3 that comes with macOS.
+
+1. Quit Zen with **Cmd+Q**.
+2. Open **Terminal** and run:
+
+```bash
+cd ~ && curl -fsSLO https://raw.githubusercontent.com/Glebelov96/arc-to-zen-guide/main/arc2zen.py && python3 arc2zen.py
+```
+
+3. Answer its questions (just press Enter for the recommended answer), then open Zen.
+
+If macOS asks to install **Command Line Developer Tools**, click Install and run the command again.
+
+| Command | What it does |
+|---|---|
+| `python3 arc2zen.py` | Guided migration |
+| `python3 arc2zen.py --list` | Show your Arc Spaces and Zen profiles, change nothing |
+| `python3 arc2zen.py --dry-run` | Show what would happen, change nothing |
+| `python3 arc2zen.py --undo` | Restore Zen from a backup (quit Zen first) |
+| `python3 arc2zen.py --spaces "Personal,Work"` | Migrate only some Spaces |
+| `python3 arc2zen.py --no-favorites` | Don't turn Arc Favorites into Essentials |
+| `python3 arc2zen.py --bookmarks arc.html` | Only export a bookmarks file, don't touch Zen |
+| `python3 arc2zen.py --profile "NAME"` | Use a specific Zen profile folder |
+
+Compared with running the scripts by hand, it:
+- **picks the right Zen profile**, and lists them all with their Spaces when you have more than one (see [the multi-profile trap](#the-multi-profile-trap));
+- **refuses to run while Zen is open**;
+- **keeps every backup**, each with a timestamp, so `--undo` can always get back to how Zen looked before the first run;
+- **leaves your open tabs alone**, replacing only pinned tabs and folders in Spaces with the same name;
+- **makes Essentials show in every Space**, like Arc Favorites.
+
+Prefer to see every step? The manual method below does the same thing with the original tool.
 
 ## Contents
 
+- [Quick start: one command](#quick-start-one-command)
 - [Why bother](#why-bother)
 - [How it works](#how-it-works)
 - [Before you start](#before-you-start)
@@ -60,7 +96,7 @@ Because it edits Zen's session file directly, **Zen must be fully closed** while
 
 ## Step by step
 
-All commands run in **Terminal** (Applications → Utilities).
+This is the manual method. The [one-command tool](#quick-start-one-command) does all of it for you. All commands run in **Terminal** (Applications → Utilities).
 
 ### 1. Quit Zen and back up your whole Zen folder
 
@@ -223,6 +259,7 @@ Copy `~/Library/Application Support/Arc/StorableSidebar.json` from the old Mac o
 
 ## Credits
 
+- `arc2zen.py`, the one-command tool in this repo, adapts its Zen session builders from arc-to-zen-migration (MIT). The notice is in the file header.
 - [arc-to-zen-migration](https://github.com/shub-rajput/arc-to-zen-migration) by shub-rajput (MIT) does the actual migration
 - [arc-export](https://github.com/ivnvxd/arc-export) by ivnvxd (MIT) exports Arc pinned tabs as bookmarks
 - [Zen Browser](https://zen-browser.app/), a free, open-source browser built on Firefox
