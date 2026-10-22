@@ -365,7 +365,10 @@
         show(copied ? 'Copied' : 'Press ⌘C');
       }
       if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(text).then(function () { show('Copied'); }, fallback);
+        var settled = false;
+        var finish = function (fn) { return function () { if (!settled) { settled = true; fn(); } }; };
+        navigator.clipboard.writeText(text).then(finish(function () { show('Copied'); }), finish(fallback));
+        setTimeout(finish(fallback), 800); // some embedded browsers never answer
       } else {
         fallback();
       }
