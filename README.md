@@ -44,6 +44,24 @@ python3 arc2zen.py --save-arc
 
 You get an `Arc backup YYYY-MM-DD` folder with Arc's sidebar file, older copies Arc kept, and a bookmarks file any browser can import. When you later run `arc2zen.py` without Arc, it finds that folder by itself.
 
+### No Terminal? Double-click instead (Mac)
+
+Download [`arc2zen.command`](https://raw.githubusercontent.com/Glebelov96/arc-to-zen-guide/main/arc2zen.command), then in Finder **right-click it → Open** (needed once, so macOS trusts it). It downloads the helper and runs the guided migration in a window, no typing. Everything below also works with `./arc2zen.command` in place of `python3 arc2zen.py`.
+
+### The rest of your move: history, passwords, extensions
+
+The migration moves your sidebar. For everything else, run:
+
+```bash
+python3 arc2zen.py --report
+```
+
+This writes a short HTML report: what moved automatically, and a checklist for the rest, with your installed extensions matched to their Firefox add-ons.
+
+- **History** — `python3 arc2zen.py --export-history` reads Arc's history (read-only) and saves it as HTML and CSV you can keep and search. Zen has no direct history import, so this keeps it readable after Arc is gone.
+- **Passwords** — this tool **never reads or moves your passwords.** Export them from Arc's own settings to a file, import that file in Zen, then delete it. The browsers do the encryption; arc2zen stays out of it entirely.
+- **Extensions** — the report lists each one with where to find it on addons.mozilla.org.
+
 ### All commands
 
 On Windows, use `py` instead of `python3`.
@@ -52,6 +70,8 @@ On Windows, use `py` instead of `python3`.
 |---|---|
 | `python3 arc2zen.py` | Guided migration |
 | `python3 arc2zen.py --save-arc` | Save a copy of your Arc sidebar to Documents |
+| `python3 arc2zen.py --report` | Write a report: what moves, and what to do by hand |
+| `python3 arc2zen.py --export-history` | Save your Arc history as HTML and CSV (read-only) |
 | `python3 arc2zen.py --list` | Show your Arc Spaces and Zen profiles, change nothing |
 | `python3 arc2zen.py --dry-run` | Show what would happen, change nothing |
 | `python3 arc2zen.py --undo` | Restore Zen from a backup (quit Zen first) |

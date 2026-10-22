@@ -13,6 +13,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -137,6 +138,7 @@ class Sandbox:
         self.arc.mkdir()
         (self.arc / "StorableSidebar.json").write_text(json.dumps(arc_fixture()), encoding="utf-8")
         (self.arc / "StorableSidebar.2026-10-01-000000-001.json").write_text("{}", encoding="utf-8")
+        self._make_arc_user_data(self.arc / "User Data")
         profiles = self.zen / "Profiles"
         self.old = profiles / "aaaaaaaa.Default (release)"
         self.real = profiles / "bbbbbbbb.Default (release)-1"
@@ -153,9 +155,34 @@ class Sandbox:
             "[B]\nDefault=Profiles/bbbbbbbb.Default (release)-1\n", encoding="utf-8")
         self.original = (self.real / z.SESSION_FILE).read_bytes()
 
+    def _make_arc_user_data(self, ud):
+        """A Chromium-shaped profile: History sqlite + one extension manifest."""
+        import sqlite3
+        default = ud / "Default"
+        default.mkdir(parents=True)
+        con = sqlite3.connect(default / "History")
+        con.execute("CREATE TABLE urls (id INTEGER PRIMARY KEY, url TEXT, title TEXT, "
+                    "visit_count INTEGER, hidden INTEGER, last_visit_time INTEGER)")
+        now_us = int((time.time() + 11_644_473_600) * 1_000_000)
+        con.executemany("INSERT INTO urls (url,title,visit_count,hidden,last_visit_time) VALUES (?,?,?,?,?)", [
+            ("https://example.com/news", "The News", 5, 0, now_us),
+            ("https://example.com/old", "Old Page", 1, 0, now_us - 86_400_000_000),
+            ("https://secret.example/x", "Hidden", 2, 1, now_us),       # hidden → skipped
+            ("arc://history", "Arc internal", 1, 0, now_us),             # non-http → skipped
+        ])
+        con.commit()
+        con.close()
+        mani = default / "Extensions" / "abcd" / "1.0_0" / "manifest.json"
+        mani.parent.mkdir(parents=True)
+        mani.write_text(json.dumps({"name": "uBlock Origin", "version": "1.0"}), encoding="utf-8")
+        mani2 = default / "Extensions" / "efgh" / "2.0_0" / "manifest.json"
+        mani2.parent.mkdir(parents=True)
+        mani2.write_text(json.dumps({"name": "Some Niche Tool"}), encoding="utf-8")
+
     def env(self, **extra):
         e = dict(os.environ, HOME=str(self.home), USERPROFILE=str(self.home),
-                 ARC2ZEN_ARC_DIR=str(self.arc), ARC2ZEN_ZEN_DIR=str(self.zen), NO_COLOR="1")
+                 ARC2ZEN_ARC_DIR=str(self.arc), ARC2ZEN_ZEN_DIR=str(self.zen),
+                 ARC2ZEN_ARC_USERDATA=str(self.arc / "User Data"), NO_COLOR="1")
         e.update(extra)
         return e
 
@@ -359,6 +386,55 @@ class TestCommandLine(unittest.TestCase):
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("Zen is open", r.stdout)
         self.assertEqual((self.sb.real / z.SESSION_FILE).read_bytes(), self.sb.original)
+
+
+class TestHistory(unittest.TestCase):
+    def setUp(self):
+        self.sb = Sandbox()
+        self.hist = self.sb.arc / "User Data" / "Default" / "History"
+
+    def tearDown(self):
+        self.sb.close()
+
+    def test_reads_only_visible_http_pages(self):
+        rows = z.read_arc_history(self.hist)
+        urls = [r[0] for r in rows]
+        self.assertEqual(urls, ["https://example.com/news", "https://example.com/old"])  # newest first
+        self.assertNotIn("https://secret.example/x", urls)  # hidden skipped
+        self.assertTrue(all(not u.startswith("arc://") for u in urls))
+        self.assertEqual(rows[0][1], "The News")
+        self.assertRegex(rows[0][3], r"\d{4}-\d\d-\d\d \d\d:\d\d")
+
+    def test_read_is_nondestructive(self):
+        before = self.hist.read_bytes()
+        z.read_arc_history(self.hist)
+        self.assertEqual(self.hist.read_bytes(), before)
+
+    def test_limit(self):
+        self.assertEqual(len(z.read_arc_history(self.hist, limit=1)), 1)
+
+    def test_extensions_listed_and_deduped(self):
+        names = z.read_arc_extensions(self.sb.arc / "User Data")
+        self.assertIn("uBlock Origin", names)
+        self.assertIn("Some Niche Tool", names)
+        self.assertEqual(len(names), len(set(n.lower() for n in names)))
+
+    def test_cli_export_history(self):
+        r = self.sb.run("--export-history", "--out", str(self.sb.home / "hout"))
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        out = self.sb.home / "hout"
+        self.assertIn("The News", (out / "history.html").read_text())
+        self.assertIn("visit_count", (out / "history.csv").read_text())
+
+    def test_cli_report(self):
+        r = self.sb.run("--report", "--out", str(self.sb.home / "report.html"))
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        html_text = (self.sb.home / "report.html").read_text()
+        self.assertIn("uBlock Origin", html_text)
+        self.assertIn("addons.mozilla.org", html_text)     # Firefox-equivalent hint
+        self.assertIn("Passwords", html_text)
+        self.assertIn("export", html_text.lower())
+        self.assertNotIn("Login Data", html_text)          # we never reference the password store
 
 
 if __name__ == "__main__":

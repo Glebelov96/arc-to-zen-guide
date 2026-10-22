@@ -178,6 +178,7 @@
     <nav class="nav mono" aria-label="Sections">
       <a href="#moves">What moves</a>
       <a href="#steps">Steps</a>
+      <a href="#rest">History & passwords</a>
       <a href="#save">Save Arc</a>
       <a href="#undo">Undo</a>
       <a href="#faq">Questions</a>
@@ -288,6 +289,24 @@
           </div>
         </li>
       </ol>
+      <p class="note" style="margin-top:22px"><span class="mono">No Terminal?</span>Download <a href="https://raw.githubusercontent.com/Glebelov96/arc-to-zen-guide/main/arc2zen.command">arc2zen.command</a>, then in Finder right-click it and choose <b>Open</b> (once, so your Mac trusts it). It does the same five steps in a window, with nothing to type.</p>
+    </div>
+  </section>
+
+  <hr class="rule">
+
+  <section class="sec" id="rest" aria-labelledby="h-rest">
+    <div class="sec-label">
+      <h2 id="h-rest">The rest of your move</h2>
+      <p class="mono">History, passwords,<br>extensions</p>
+    </div>
+    <div>
+      <p>The steps above move your sidebar. For everything else, run <code>python3 arc2zen.py --report</code> to get a checklist with your extensions matched to their Zen add-ons.</p>
+      <ul class="qa">
+        <li><b>History</b><span>Run <code>python3 arc2zen.py --export-history</code>. It reads your Arc history (read-only) and saves it as a file you can keep and search. Zen can't import history directly.</span></li>
+        <li><b>Passwords</b><span>This tool never touches your passwords. Export them from Arc's settings to a file, import that file in Zen, then delete it. Your Mac does the encryption, not us.</span></li>
+        <li><b>Extensions</b><span>Reinstall them from addons.mozilla.org. The report lists each one with a link.</span></li>
+      </ul>
     </div>
   </section>
 

@@ -65,7 +65,7 @@ import time
 import uuid
 from pathlib import Path
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 
 IS_WINDOWS = os.name == "nt"
 IS_MAC = sys.platform == "darwin"
@@ -118,6 +118,34 @@ def zen_dir():
 def documents_dir():
     d = home() / "Documents"
     return d if d.is_dir() else home()
+
+
+def arc_user_data():
+    """Arc's Chromium 'User Data' folder, next to the sidebar file.
+    Holds History and Bookmarks (plain SQLite/JSON — not passwords)."""
+    if os.environ.get("ARC2ZEN_ARC_USERDATA"):
+        return Path(os.environ["ARC2ZEN_ARC_USERDATA"])
+    for d in arc_dir_candidates():
+        ud = d / "User Data"
+        if ud.is_dir():
+            return ud
+    return None
+
+
+# Common Arc/Chrome extensions → where to find a Firefox/Zen equivalent.
+# A hint, not an install step; Zen uses Firefox add-ons from addons.mozilla.org.
+EXTENSION_HINTS = {
+    "ublock origin": "uBlock Origin — on addons.mozilla.org, same name",
+    "bitwarden": "Bitwarden — on addons.mozilla.org, same name",
+    "1password": "1Password — on addons.mozilla.org, same name",
+    "dark reader": "Dark Reader — on addons.mozilla.org, same name",
+    "grammarly": "Grammarly — on addons.mozilla.org, same name",
+    "lastpass": "LastPass — on addons.mozilla.org, same name",
+    "react developer tools": "React Developer Tools — on addons.mozilla.org",
+    "metamask": "MetaMask — on addons.mozilla.org, same name",
+    "honey": "Honey — on addons.mozilla.org, same name",
+    "notion web clipper": "Notion Web Clipper — on addons.mozilla.org",
+}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -727,6 +755,87 @@ def bookmarks_html(spaces):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# History (read-only). Arc's History is a plain SQLite file — no passwords here.
+# We only ever read it, and we never touch Arc's Login Data / password store.
+# ─────────────────────────────────────────────────────────────────────────────
+def _chrome_time(microseconds):
+    """Chrome timestamps are microseconds since 1601-01-01. Return a date string."""
+    if not microseconds:
+        return ""
+    unix = microseconds / 1_000_000 - 11_644_473_600
+    if unix <= 0:
+        return ""
+    try:
+        return datetime.datetime.fromtimestamp(unix).strftime("%Y-%m-%d %H:%M")
+    except (OverflowError, OSError, ValueError):
+        return ""
+
+
+def read_arc_history(history_file, limit=0):
+    """Read Arc's browsing history. Returns [(url, title, visits, last_visit)].
+    Opens the file read-only and immutable, so Arc's data is never modified."""
+    import sqlite3
+    uri = f"file:{Path(history_file).as_uri()[7:]}?mode=ro&immutable=1"
+    rows = []
+    con = sqlite3.connect(uri, uri=True, timeout=5)
+    try:
+        q = ("SELECT url, title, visit_count, last_visit_time FROM urls "
+             "WHERE hidden = 0 ORDER BY last_visit_time DESC")
+        if limit:
+            q += f" LIMIT {int(limit)}"
+        for url, title, visits, last in con.execute(q):
+            if url and url.startswith(("http://", "https://")):
+                rows.append((url, title or url, visits or 0, _chrome_time(last)))
+    finally:
+        con.close()
+    return rows
+
+
+def history_html(rows):
+    lines = ["<!DOCTYPE NETSCAPE-Bookmark-file-1>",
+             '<META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=UTF-8">',
+             "<TITLE>Arc History</TITLE>", "<H1>Arc History</H1>", "<DL><p>"]
+    for url, title, _visits, last in rows:
+        add = f' ADD_DATE="{last}"' if last else ""
+        lines.append(f'    <DT><A HREF="{html.escape(url, quote=True)}"{add}>{html.escape(title)}</A>')
+    lines.append("</DL><p>")
+    return "\n".join(lines) + "\n"
+
+
+def history_csv(rows):
+    import csv
+    import io
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["url", "title", "visit_count", "last_visit"])
+    for url, title, visits, last in rows:
+        w.writerow([url, title, visits, last])
+    return buf.getvalue()
+
+
+def read_arc_extensions(user_data):
+    """Best-effort list of installed Arc extension names (from each manifest).
+    Reads only extension manifests; ignores everything it can't parse."""
+    names = []
+    if not user_data:
+        return names
+    for mani in Path(user_data).glob("*/Extensions/*/*/manifest.json"):
+        try:
+            m = json.loads(mani.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        name = m.get("name", "")
+        if isinstance(name, str) and name and not name.startswith("__MSG_"):
+            names.append(name)
+    seen, out = set(), []
+    for n in sorted(names, key=str.lower):
+        if n.lower() not in seen:
+            seen.add(n.lower())
+            out.append(n)
+    return out
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Commands
 # ─────────────────────────────────────────────────────────────────────────────
 def load_arc(path_arg, quiet=False):
@@ -866,6 +975,124 @@ def cmd_save_arc(args):
     ok("Bookmarks file: Arc pinned tabs.html")
     print(f"\n{green(bold('Done.'))} Your Arc sidebar is safe, even after Arc shuts down.")
     print(dim(f"When you're ready to switch, run:  {RUN}"))
+
+
+def _find_arc_history():
+    ud = arc_user_data()
+    if not ud:
+        return None
+    for name in ("Default", ""):
+        h = (ud / name / "History") if name else (ud / "History")
+        if h.exists():
+            return h
+    found = sorted(ud.glob("*/History"))
+    return found[0] if found else None
+
+
+def cmd_export_history(args):
+    print(bold(f"arc2zen {VERSION}") + dim(" — export your Arc history"))
+    step(1, "Reading Arc history")
+    hist = Path(args.arc_history).expanduser() if args.arc_history else _find_arc_history()
+    if not hist or not hist.exists():
+        fail("Couldn't find Arc's history file.",
+             "It lives in Arc's 'User Data' folder. If Arc is on another Mac, copy that\n"
+             "  folder over, or point to the file:  " + RUN + " --export-history --arc-history PATH")
+    try:
+        rows = read_arc_history(hist, limit=args.limit or 0)
+    except Exception as e:
+        fail(f"Couldn't read the history file: {e}",
+             "Make sure Arc is fully quit, then try again.")
+    info(f"{len(rows)} pages found")
+
+    step(2, "Writing")
+    out = Path(args.out).expanduser() if args.out else documents_dir() / f"Arc history {datetime.date.today().isoformat()}"
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "history.html").write_text(history_html(rows), encoding="utf-8")
+    (out / "history.csv").write_text(history_csv(rows), encoding="utf-8")
+    ok(f"history.html and history.csv written to {out}")
+    print(f"\n{green(bold('Done.'))}")
+    print(dim("Open history.html to browse or search your old pages. Zen has no direct\n"
+              "history import, so this keeps your history readable even after Arc is gone."))
+
+
+def cmd_report(args):
+    print(bold(f"arc2zen {VERSION}") + dim(" — what moves, and what to do by hand"))
+    step(1, "Looking at Arc")
+    arc = load_arc(args.arc, quiet=True)
+    spaces = arc.spaces()
+    favorites = arc.favorites()
+    ud = arc_user_data()
+    hist = _find_arc_history()
+    history_count = 0
+    if hist:
+        try:
+            history_count = len(read_arc_history(hist))
+        except Exception:
+            history_count = 0
+    extensions = read_arc_extensions(ud)
+    total_folders = sum(count_tree(s["tree"])[0] for s in spaces)
+    total_tabs = sum(count_tree(s["tree"])[1] for s in spaces)
+
+    step(2, "Writing the report")
+    out = Path(args.out).expanduser() if args.out else documents_dir() / f"Arc to Zen report {datetime.date.today().isoformat()}.html"
+    out.write_text(report_html(spaces, favorites, total_folders, total_tabs,
+                               history_count, extensions), encoding="utf-8")
+    ok(f"Report written to {out}")
+    info(f"{len(spaces)} Spaces, {total_folders} folders, {total_tabs} pinned tabs, "
+         f"{len(favorites)} Favorites, {history_count} history entries, {len(extensions)} extensions")
+    print(f"\n{green(bold('Done.'))} Open the report to see what moves automatically and what to do by hand.")
+
+
+def report_html(spaces, favorites, folders, tabs, history_count, extensions):
+    def li(name, note):
+        return f"<li><b>{html.escape(name)}</b> — {html.escape(note)}</li>"
+    ext_rows = ""
+    for name in extensions:
+        hint = EXTENSION_HINTS.get(name.lower(), "search addons.mozilla.org for it or an alternative")
+        ext_rows += f"<tr><td>{html.escape(name)}</td><td>{html.escape(hint)}</td></tr>"
+    if not extensions:
+        ext_rows = '<tr><td colspan="2">No extensions found (or Arc wasn\'t readable). Check Arc → Extensions.</td></tr>'
+    moved = "".join(li(*m) for m in [
+        (f"{len(spaces)} Spaces, {folders} folders, {tabs} pinned tabs", "rebuilt in Zen by arc2zen"),
+        (f"{len(favorites)} Favorites", "added as Zen Essentials by arc2zen"),
+    ])
+    byhand = "".join(li(*m) for m in [
+        ("Passwords", "export from Arc's settings to a file, import it in Zen, then delete the file"),
+        ("History" + (f" ({history_count} pages)" if history_count else ""),
+         "run  python3 arc2zen.py --export-history  to keep it readable; Zen has no direct import"),
+        ("Extensions", "reinstall from addons.mozilla.org — see the list below"),
+    ])
+    return f"""<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Arc to Zen — your migration report</title>
+<style>
+ :root{{color-scheme:light dark}}
+ body{{font:16px/1.6 -apple-system,system-ui,sans-serif;max-width:720px;margin:0 auto;padding:32px 20px;
+   background:#131211;color:#ece9e2}}
+ @media(prefers-color-scheme:light){{body{{background:#f6f5f2;color:#1b1a18}}}}
+ h1{{font-size:30px;letter-spacing:-.02em}} h2{{font-size:20px;margin-top:32px}}
+ .red{{color:#e8462d}} ul{{padding-left:20px}} li{{margin:6px 0}}
+ table{{width:100%;border-collapse:collapse;margin-top:8px}}
+ td{{padding:8px 10px;border-top:1px solid #8884;vertical-align:top}}
+ .check li{{list-style:none}} .check li::before{{content:"☐ ";color:#e8462d}}
+ small{{opacity:.7}}
+</style></head><body>
+<h1>Your move from Arc to <span class="red">Zen</span></h1>
+<p><small>Made by arc2zen on {datetime.date.today().isoformat()}. Arc shuts down December 22, 2026.</small></p>
+<h2>Moved automatically</h2><ul>{moved}</ul>
+<h2>To do by hand</h2><ul>{byhand}</ul>
+<h2>Your extensions</h2>
+<table><tr><td><b>In Arc</b></td><td><b>In Zen (Firefox add-ons)</b></td></tr>{ext_rows}</table>
+<h2>Before December 22</h2>
+<ul class="check">
+ <li>Run arc2zen to move your Spaces, folders and pinned tabs</li>
+ <li>Export your passwords from Arc and import them in Zen, then delete the export file</li>
+ <li>Export your history with --export-history if you want to keep it</li>
+ <li>Reinstall the extensions above from addons.mozilla.org</li>
+ <li>Run  python3 arc2zen.py --save-arc  to keep a copy of your Arc sidebar just in case</li>
+</ul>
+<p><small>Guide: arctozen.pages.dev · Passwords are never read or moved by this tool — you move them with the browsers' own export and import.</small></p>
+</body></html>"""
 
 
 def cmd_list(args, ask):
@@ -1036,6 +1263,13 @@ def main():
         description="Move your Arc sidebar (Spaces, folders, pinned tabs, Favorites) into Zen Browser.")
     ap.add_argument("--save-arc", action="store_true",
                     help="save a copy of your Arc sidebar to Documents, to migrate later")
+    ap.add_argument("--export-history", action="store_true",
+                    help="save your Arc browsing history as HTML and CSV (read-only)")
+    ap.add_argument("--report", action="store_true",
+                    help="write a report of what moves and what to do by hand (passwords, extensions)")
+    ap.add_argument("--arc-history", metavar="PATH", help="path to Arc's History file (default: Arc's own)")
+    ap.add_argument("--out", metavar="PATH", help="where to write (for --export-history and --report)")
+    ap.add_argument("--limit", type=int, metavar="N", help="most-recent N history entries only")
     ap.add_argument("--list", action="store_true", help="show Arc Spaces and Zen profiles; change nothing")
     ap.add_argument("--dry-run", action="store_true", help="show the plan; change nothing")
     ap.add_argument("--undo", action="store_true", help="restore Zen from an arc2zen backup")
@@ -1053,6 +1287,10 @@ def main():
     try:
         if args.save_arc:
             cmd_save_arc(args)
+        elif args.export_history:
+            cmd_export_history(args)
+        elif args.report:
+            cmd_report(args)
         elif args.bookmarks:
             cmd_bookmarks(args)
         elif args.list:
