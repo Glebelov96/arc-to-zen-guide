@@ -350,16 +350,24 @@
   // Copy buttons
   document.querySelectorAll('.copy').forEach(function (btn) {
     btn.addEventListener('click', function () {
-      var text = document.getElementById(btn.dataset.copy).textContent;
-      function done() {
-        btn.textContent = 'Copied'; btn.classList.add('done');
-        setTimeout(function () { btn.textContent = 'Copy'; btn.classList.remove('done'); }, 1800);
+      var pre = document.getElementById(btn.dataset.copy);
+      var text = pre.textContent;
+      function show(label) {
+        btn.textContent = label; btn.classList.add('done');
+        setTimeout(function () { btn.textContent = 'Copy'; btn.classList.remove('done'); }, 2200);
+      }
+      function fallback() {
+        // Select the text; try the older copy command, else ask for ⌘C
+        var r = document.createRange(); r.selectNodeContents(pre);
+        var s = window.getSelection(); s.removeAllRanges(); s.addRange(r);
+        var copied = false;
+        try { copied = document.execCommand('copy'); } catch (e) {}
+        show(copied ? 'Copied' : 'Press ⌘C');
       }
       if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(text).then(done, function () {});
+        navigator.clipboard.writeText(text).then(function () { show('Copied'); }, fallback);
       } else {
-        var r = document.createRange(); r.selectNodeContents(document.getElementById(btn.dataset.copy));
-        var s = window.getSelection(); s.removeAllRanges(); s.addRange(r);
+        fallback();
       }
     });
   });
