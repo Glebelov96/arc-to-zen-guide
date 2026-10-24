@@ -491,8 +491,9 @@ def zen_process_running():
     try:
         if IS_WINDOWS:
             out = subprocess.run(["tasklist", "/FI", "IMAGENAME eq zen.exe", "/NH"],
-                                 capture_output=True, text=True)
-            return "zen.exe" in out.stdout.lower()
+                                 capture_output=True, text=True,
+                                 encoding="oem", errors="replace")
+            return "zen.exe" in (out.stdout or "").lower()
         out = subprocess.run(["pgrep", "-f", "/Contents/MacOS/zen"],
                              capture_output=True, text=True)
         return out.returncode == 0 and bool(out.stdout.strip())
